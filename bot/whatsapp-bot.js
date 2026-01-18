@@ -1,23 +1,18 @@
-// bot-baileys.js - Gestión web desde WhatsApp (SIN navegador)
+// bot/whatsapp-bot.js - Bot de WhatsApp modularizado
 const { default: makeWASocket, DisconnectReason, useMultiFileAuthState, delay } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
-const express = require('express');
-const cors = require('cors');
 const fs = require('fs').promises;
 const path = require('path');
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const DATA_FILE = path.join(__dirname, 'dental-data.json');
-
-// ⚠️ IMPORTANTE: Pon tu número aquí (sin + ni espacios)
+// ⚠️ IMPORTANTE: Configura tu número de WhatsApp aquí
 // Ejemplo: si tu número es +593 97 871 9532, pon: 593978719532
 const ADMIN_NUMBER = '593978719532';
 
+const DATA_FILE = path.join(__dirname, '..', 'data', 'dental-data.json');
+
+// Datos del sistema (compartidos con el servidor)
 let dentalData = {
   businessPhone: '593978719532',
   services: ['Odontología General', 'Diseño de Sonrisa', 'Ortodoncia Invisible', 'Implantes Dentales'],
@@ -32,6 +27,12 @@ let dentalData = {
   blockedSlots: {},
   appointments: {}
 };
+
+let sock; // Socket de WhatsApp
+
+// =====================================================
+// FUNCIONES DE DATOS
+// =====================================================
 
 async function loadData() {
   try {
@@ -53,10 +54,13 @@ async function saveData() {
   }
 }
 
-let sock;
+// =====================================================
+// CONEXIÓN A WHATSAPP
+// =====================================================
 
 async function connectToWhatsApp() {
-  const { state, saveCreds } = await useMultiFileAuthState('auth_baileys');
+  const authPath = path.join(__dirname, '..', 'data', 'auth_baileys');
+  const { state, saveCreds } = await useMultiFileAuthState(authPath);
   
   sock = makeWASocket({
     auth: state,
@@ -70,9 +74,12 @@ async function connectToWhatsApp() {
     const { connection, lastDisconnect, qr } = update;
     
     if (qr) {
-      console.log('\n🔵 ESCANEA ESTE CÓDIGO QR CON WHATSAPP:\n');
+      console.log('\n' + '='.repeat(70));
+      console.log('📱 ESCANEA ESTE CÓDIGO QR CON WHATSAPP:');
+      console.log('='.repeat(70) + '\n');
       qrcode.generate(qr, { small: true });
-      console.log('\n📱 WhatsApp > Dispositivos vinculados > Vincular dispositivo\n');
+      console.log('\n📱 Abre WhatsApp > Dispositivos vinculados > Vincular dispositivo\n');
+      console.log('='.repeat(70) + '\n');
     }
     
     if (connection === 'close') {
@@ -84,10 +91,10 @@ async function connectToWhatsApp() {
       }
     } else if (connection === 'open') {
       console.log('\n' + '='.repeat(70));
-      console.log('✅ BOT CONECTADO EXITOSAMENTE!');
+      console.log('✅ BOT DE WHATSAPP CONECTADO EXITOSAMENTE!');
       console.log('='.repeat(70));
-      console.log('📱 Número autorizado:', ADMIN_NUMBER);
-      console.log('💬 Escríbete a TI MISMO para gestionar tu web');
+      console.log('📱 Número administrador:', ADMIN_NUMBER);
+      console.log('💬 Escríbete a TI MISMO para gestionar tu sistema');
       console.log('📋 Escribe "menu" para ver todos los comandos');
       console.log('='.repeat(70) + '\n');
       
@@ -111,14 +118,12 @@ async function connectToWhatsApp() {
     const from = msg.key.remoteJid;
     const isFromMe = msg.key.fromMe;
     
-    // Extraer el texto del mensaje
     const text = msg.message.conversation 
       || msg.message.extendedTextMessage?.text 
       || '';
     
     if (!text) return;
     
-    // Extraer número sin @s.whatsapp.net
     const phoneNumber = from.replace('@s.whatsapp.net', '').replace('@g.us', '');
     
     console.log('\n' + '█'.repeat(70));
@@ -129,7 +134,6 @@ async function connectToWhatsApp() {
     console.log('Texto:', text);
     console.log('█'.repeat(70) + '\n');
     
-    // Verificar si es el admin (puede ser mensaje enviado por ti o recibido)
     const isAdmin = phoneNumber.includes(ADMIN_NUMBER) || isFromMe;
     
     if (!isAdmin) {
@@ -141,6 +145,10 @@ async function connectToWhatsApp() {
     await handleAdminCommand(from, text.toLowerCase().trim(), msg);
   });
 }
+
+// =====================================================
+// MANEJO DE COMANDOS
+// =====================================================
 
 async function handleAdminCommand(chatId, text, originalMsg) {
   try {
@@ -236,45 +244,43 @@ async function handleAdminCommand(chatId, text, originalMsg) {
         await saveData();
         
         await sock.sendMessage(chatId, {
-          text: `✅ *Hora bloqueada exitosamente*\n\n` +
-                `📅 Fecha: ${date}\n` +
-                `🕐 Hora: ${time}\n\n` +
-                `🌐 _Tu web ya refleja este cambio_`
+          text: `✅ *Hora bloqueada*\n\n📅 ${date} a las ${time}\n\n🌐 _Los usuarios ya no verán este horario en la web_`
         });
         console.log('✅ Hora bloqueada:', date, time, '\n');
       } else {
-        await sock.sendMessage(chatId, { 
-          text: `⚠️ Esa hora ya estaba bloqueada` 
-        });
+        await sock.sendMessage(chatId, { text: `⚠️ Esa hora ya estaba bloqueada` });
       }
       return;
     }
     
     // BLOQUEAR DÍA COMPLETO
     if (text.startsWith('bloquear dia ')) {
-      const date = text.replace('bloquear dia ', '').trim();
-      const dateObj = new Date(date);
-      const dayName = dateObj.toLocaleDateString('es-ES', { weekday: 'long' });
-      const dayCap = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+      const date = text.split(' ')[2];
       
-      const allSlots = dentalData.schedule[dayCap]?.slots || [];
-      
-      if (allSlots.length === 0) {
+      if (!date) {
         await sock.sendMessage(chatId, { 
-          text: `❌ No hay horarios configurados para ${dayCap}` 
+          text: '❌ Formato incorrecto\n\nUsa: *bloquear dia 2026-01-20*' 
         });
         return;
       }
       
-      dentalData.blockedSlots[date] = [...allSlots];
+      const dateObj = new Date(date);
+      const dayName = dateObj.toLocaleDateString('es-ES', { weekday: 'long' });
+      const dayCap = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+      
+      const daySchedule = dentalData.schedule[dayCap];
+      if (!daySchedule) {
+        await sock.sendMessage(chatId, { 
+          text: `⚠️ No hay horarios configurados para ${dayCap}` 
+        });
+        return;
+      }
+      
+      dentalData.blockedSlots[date] = [...daySchedule.slots];
       await saveData();
       
       await sock.sendMessage(chatId, {
-        text: `✅ *DÍA COMPLETO BLOQUEADO*\n\n` +
-              `📅 Fecha: ${date}\n` +
-              `📆 Día: ${dayCap}\n` +
-              `🚫 ${allSlots.length} horarios bloqueados\n\n` +
-              `🌐 _Los clientes ya no verán disponibilidad para este día_`
+        text: `✅ *Día completo bloqueado*\n\n📅 ${date} (${dayCap})\n🚫 ${daySchedule.slots.length} horarios bloqueados\n\n🌐 _Actualizado en la web_`
       });
       console.log('✅ Día completo bloqueado:', date, '\n');
       return;
@@ -282,34 +288,30 @@ async function handleAdminCommand(chatId, text, originalMsg) {
     
     // DESBLOQUEAR DÍA COMPLETO
     if (text.startsWith('desbloquear dia ')) {
-      const date = text.replace('desbloquear dia ', '').trim();
+      const date = text.split(' ')[2];
       
       if (dentalData.blockedSlots[date]) {
-        const cantidadBloqueados = dentalData.blockedSlots[date].length;
         delete dentalData.blockedSlots[date];
         await saveData();
         
         await sock.sendMessage(chatId, {
-          text: `✅ *DÍA DESBLOQUEADO*\n\n` +
-                `📅 Fecha: ${date}\n` +
-                `🔓 ${cantidadBloqueados} horarios liberados\n\n` +
-                `🌐 _Los clientes ya pueden agendar para este día_`
+          text: `✅ *Día desbloqueado*\n\n📅 ${date}\n\n🌐 _Todos los horarios disponibles nuevamente_`
         });
-        console.log('✅ Día completo desbloqueado:', date, '\n');
+        console.log('✅ Día desbloqueado:', date, '\n');
       } else {
         await sock.sendMessage(chatId, { 
-          text: `⚠️ No había bloqueos para esa fecha (${date})` 
+          text: `⚠️ Ese día no estaba bloqueado` 
         });
       }
       return;
     }
     
     // DESBLOQUEAR HORA ESPECÍFICA
-    if (text.startsWith('desbloquear ')) {
+    if (text.startsWith('desbloquear ') && !text.includes('dia')) {
       const parts = text.split(' ');
       if (parts.length < 3) {
         await sock.sendMessage(chatId, { 
-          text: '❌ Formato incorrecto\n\nUsa: *desbloquear 2026-01-20 09:00*\n\nPara desbloquear todo el día:\n*desbloquear dia 2026-01-20*' 
+          text: '❌ Formato incorrecto\n\nUsa: *desbloquear 2026-01-20 09:00*' 
         });
         return;
       }
@@ -333,7 +335,7 @@ async function handleAdminCommand(chatId, text, originalMsg) {
           console.log('✅ Hora desbloqueada:', date, time, '\n');
         } else {
           await sock.sendMessage(chatId, { 
-            text: `⚠️ Esa hora específica (${time}) no estaba bloqueada\n\nPara ver todos los bloqueos escribe: *estado*` 
+            text: `⚠️ Esa hora específica (${time}) no estaba bloqueada` 
           });
         }
       } else {
@@ -459,96 +461,26 @@ async function handleAdminCommand(chatId, text, originalMsg) {
 }
 
 // =====================================================
-// API REST (para la web)
+// FUNCIONES EXPORTADAS
 // =====================================================
 
-app.get('/api/config', (req, res) => {
-  res.json({
-    businessPhone: dentalData.businessPhone,
-    services: dentalData.services,
-    schedule: dentalData.schedule
-  });
-});
-
-app.get('/api/availability/:date', (req, res) => {
-  const { date } = req.params;
-  const dateObj = new Date(date);
-  const dayName = dateObj.toLocaleDateString('es-ES', { weekday: 'long' });
-  const dayCap = dayName.charAt(0).toUpperCase() + dayName.slice(1);
-  
-  const daySchedule = dentalData.schedule[dayCap];
-  if (!daySchedule) {
-    return res.json({ availableSlots: [] });
-  }
-  
-  const blockedTimes = dentalData.blockedSlots[date] || [];
-  const bookedTimes = (dentalData.appointments[date] || []).map(a => a.time);
-  
-  const availableSlots = daySchedule.slots.filter(slot => 
-    !blockedTimes.includes(slot) && !bookedTimes.includes(slot)
-  );
-  
-  res.json({ availableSlots });
-});
-
-app.post('/api/appointments', async (req, res) => {
-  const { date, time, client, phone } = req.body;
-  
-  if (!dentalData.appointments[date]) {
-    dentalData.appointments[date] = [];
-  }
-  
-  const dateObj = new Date(date);
-  const dayName = dateObj.toLocaleDateString('es-ES', { weekday: 'long' });
-  const dayCap = dayName.charAt(0).toUpperCase() + dayName.slice(1);
-  
-  const blockedTimes = dentalData.blockedSlots[date] || [];
-  const bookedTimes = dentalData.appointments[date].map(a => a.time);
-  
-  if (blockedTimes.includes(time) || bookedTimes.includes(time)) {
-    return res.status(400).json({ error: 'Horario no disponible' });
-  }
-  
-  dentalData.appointments[date].push({ time, client, phone });
-  await saveData();
-  
-  // Notificar al admin
-  try {
-    await sock.sendMessage(`${ADMIN_NUMBER}@s.whatsapp.net`, {
-      text: `🔔 *NUEVA CITA AGENDADA*\n\n` +
-            `📅 Fecha: ${date}\n` +
-            `🕐 Hora: ${time}\n` +
-            `👤 Cliente: ${client}\n` +
-            `📞 Teléfono: ${phone}`
-    });
-  } catch (error) {
-    console.error('Error notificando cita:', error);
-  }
-  
-  res.json({ success: true });
-});
-
-// =====================================================
-// INICIALIZACIÓN
-// =====================================================
-
-const PORT = process.env.PORT || 3001;
-
-async function init() {
-  console.log('\n🚀 Iniciando sistema RLDental...\n');
-  
+async function initBot() {
   await loadData();
-  
-  app.listen(PORT, () => {
-    console.log(`✅ API REST corriendo en http://localhost:${PORT}`);
-    console.log(`📡 Endpoints disponibles:`);
-    console.log(`   GET  /api/config`);
-    console.log(`   GET  /api/availability/:date`);
-    console.log(`   POST /api/appointments\n`);
-  });
-  
-  console.log('🔄 Conectando a WhatsApp...\n');
-  connectToWhatsApp();
+  await connectToWhatsApp();
 }
 
-init();
+function getDentalData() {
+  return dentalData;
+}
+
+function getSocket() {
+  return sock;
+}
+
+module.exports = {
+  initBot,
+  getDentalData,
+  getSocket,
+  saveData,
+  ADMIN_NUMBER
+};
