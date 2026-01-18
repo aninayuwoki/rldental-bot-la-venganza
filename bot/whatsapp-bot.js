@@ -124,30 +124,30 @@ async function connectToWhatsApp() {
     const from = msg.key.remoteJid;
     const isFromMe = msg.key.fromMe;
     
+    // FILTRO CRÍTICO: Solo procesar mensajes de tu propio chat
+    const myChat = `${ADMIN_NUMBER}@s.whatsapp.net`;
+    if (from !== myChat) {
+      // Ignorar silenciosamente todos los otros chats
+      return;
+    }
+    
     const text = msg.message.conversation 
       || msg.message.extendedTextMessage?.text 
       || '';
     
     if (!text) return;
     
-    const phoneNumber = from.replace('@s.whatsapp.net', '').replace('@g.us', '');
+    const phoneNumber = from.replace('@s.whatsapp.net', '');
     
     console.log('\n' + '█'.repeat(70));
-    console.log('📨 NUEVO MENSAJE');
+    console.log('📨 COMANDO RECIBIDO');
     console.log('█'.repeat(70));
-    console.log('De:', phoneNumber);
+    console.log('Chat:', phoneNumber);
     console.log('Enviado por mí?', isFromMe ? 'SÍ ✅' : 'NO ❌');
     console.log('Texto:', text);
     console.log('█'.repeat(70) + '\n');
     
-    const isAdmin = phoneNumber.includes(ADMIN_NUMBER) || isFromMe;
-    
-    if (!isAdmin) {
-      console.log('⚠️  Este número NO es administrador. Ignorado.\n');
-      return;
-    }
-    
-    console.log('✅ Mensaje de ADMIN detectado. Procesando...\n');
+    console.log('✅ Procesando comando...\n');
     await handleAdminCommand(from, text.toLowerCase().trim(), msg);
   });
 }
