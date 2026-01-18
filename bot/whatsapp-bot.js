@@ -1,22 +1,24 @@
-// bot-baileys.js - Gestión web desde WhatsApp (SIN navegador)
+// bot/whatsapp-bot.js - Módulo del bot de WhatsApp
 const { default: makeWASocket, DisconnectReason, useMultiFileAuthState, delay } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
-const express = require('express');
-const cors = require('cors');
 const fs = require('fs').promises;
 const path = require('path');
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+// =====================================================
+// CONFIGURACIÓN
+// =====================================================
 
-const DATA_FILE = path.join(__dirname, 'dental-data.json');
-
-// ⚠️ IMPORTANTE: Pon tu número aquí (sin + ni espacios)
-// Ejemplo: si tu número es +593 97 871 9532, pon: 593978719532
+// ⚠️ IMPORTANTE: Configura tu número aquí (sin + ni espacios)
 const ADMIN_NUMBER = '593978719532';
+
+const DATA_FILE = path.join(__dirname, '..', 'data', 'dental-data.json');
+const AUTH_PATH = path.join(__dirname, '..', 'data', 'auth_baileys');
+
+// =====================================================
+// DATOS DEL SISTEMA
+// =====================================================
 
 let dentalData = {
   businessPhone: '593978719532',
@@ -32,6 +34,12 @@ let dentalData = {
   blockedSlots: {},
   appointments: {}
 };
+
+let sock; // Socket de WhatsApp
+
+// =====================================================
+// FUNCIONES DE DATOS
+// =====================================================
 
 async function loadData() {
   try {
@@ -53,10 +61,12 @@ async function saveData() {
   }
 }
 
-let sock;
+// =====================================================
+// CONEXIÓN A WHATSAPP
+// =====================================================
 
 async function connectToWhatsApp() {
-  const { state, saveCreds } = await useMultiFileAuthState('auth_baileys');
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_PATH);
   
   sock = makeWASocket({
     auth: state,
@@ -70,9 +80,12 @@ async function connectToWhatsApp() {
     const { connection, lastDisconnect, qr } = update;
     
     if (qr) {
-      console.log('\n🔵 ESCANEA ESTE CÓDIGO QR CON WHATSAPP:\n');
+      console.log('\n' + '='.repeat(70));
+      console.log('📱 ESCANEA ESTE CÓDIGO QR CON WHATSAPP:');
+      console.log('='.repeat(70) + '\n');
       qrcode.generate(qr, { small: true });
-      console.log('\n📱 WhatsApp > Dispositivos vinculados > Vincular dispositivo\n');
+      console.log('\n📱 Abre WhatsApp > Dispositivos vinculados > Vincular dispositivo\n');
+      console.log('='.repeat(70) + '\n');
     }
     
     if (connection === 'close') {
@@ -84,10 +97,10 @@ async function connectToWhatsApp() {
       }
     } else if (connection === 'open') {
       console.log('\n' + '='.repeat(70));
-      console.log('✅ BOT CONECTADO EXITOSAMENTE!');
+      console.log('✅ BOT DE WHATSAPP CONECTADO EXITOSAMENTE!');
       console.log('='.repeat(70));
-      console.log('📱 Número autorizado:', ADMIN_NUMBER);
-      console.log('💬 Escríbete a TI MISMO para gestionar tu web');
+      console.log('📱 Número administrador:', ADMIN_NUMBER);
+      console.log('💬 Escríbete a TI MISMO para gestionar tu sistema');
       console.log('📋 Escribe "menu" para ver todos los comandos');
       console.log('='.repeat(70) + '\n');
       
@@ -111,14 +124,12 @@ async function connectToWhatsApp() {
     const from = msg.key.remoteJid;
     const isFromMe = msg.key.fromMe;
     
-    // Extraer el texto del mensaje
     const text = msg.message.conversation 
       || msg.message.extendedTextMessage?.text 
       || '';
     
     if (!text) return;
     
-    // Extraer número sin @s.whatsapp.net
     const phoneNumber = from.replace('@s.whatsapp.net', '').replace('@g.us', '');
     
     console.log('\n' + '█'.repeat(70));
@@ -129,7 +140,6 @@ async function connectToWhatsApp() {
     console.log('Texto:', text);
     console.log('█'.repeat(70) + '\n');
     
-    // Verificar si es el admin (puede ser mensaje enviado por ti o recibido)
     const isAdmin = phoneNumber.includes(ADMIN_NUMBER) || isFromMe;
     
     if (!isAdmin) {
@@ -141,6 +151,10 @@ async function connectToWhatsApp() {
     await handleAdminCommand(from, text.toLowerCase().trim(), msg);
   });
 }
+
+// =====================================================
+// MANEJO DE COMANDOS DE WHATSAPP
+// =====================================================
 
 async function handleAdminCommand(chatId, text, originalMsg) {
   try {
@@ -459,96 +473,30 @@ async function handleAdminCommand(chatId, text, originalMsg) {
 }
 
 // =====================================================
-// API REST (para la web)
+// FUNCIÓN DE INICIALIZACIÓN
 // =====================================================
 
-app.get('/api/config', (req, res) => {
-  res.json({
-    businessPhone: dentalData.businessPhone,
-    services: dentalData.services,
-    schedule: dentalData.schedule
-  });
-});
-
-app.get('/api/availability/:date', (req, res) => {
-  const { date } = req.params;
-  const dateObj = new Date(date);
-  const dayName = dateObj.toLocaleDateString('es-ES', { weekday: 'long' });
-  const dayCap = dayName.charAt(0).toUpperCase() + dayName.slice(1);
-  
-  const daySchedule = dentalData.schedule[dayCap];
-  if (!daySchedule) {
-    return res.json({ availableSlots: [] });
-  }
-  
-  const blockedTimes = dentalData.blockedSlots[date] || [];
-  const bookedTimes = (dentalData.appointments[date] || []).map(a => a.time);
-  
-  const availableSlots = daySchedule.slots.filter(slot => 
-    !blockedTimes.includes(slot) && !bookedTimes.includes(slot)
-  );
-  
-  res.json({ availableSlots });
-});
-
-app.post('/api/appointments', async (req, res) => {
-  const { date, time, client, phone } = req.body;
-  
-  if (!dentalData.appointments[date]) {
-    dentalData.appointments[date] = [];
-  }
-  
-  const dateObj = new Date(date);
-  const dayName = dateObj.toLocaleDateString('es-ES', { weekday: 'long' });
-  const dayCap = dayName.charAt(0).toUpperCase() + dayName.slice(1);
-  
-  const blockedTimes = dentalData.blockedSlots[date] || [];
-  const bookedTimes = dentalData.appointments[date].map(a => a.time);
-  
-  if (blockedTimes.includes(time) || bookedTimes.includes(time)) {
-    return res.status(400).json({ error: 'Horario no disponible' });
-  }
-  
-  dentalData.appointments[date].push({ time, client, phone });
-  await saveData();
-  
-  // Notificar al admin
-  try {
-    await sock.sendMessage(`${ADMIN_NUMBER}@s.whatsapp.net`, {
-      text: `🔔 *NUEVA CITA AGENDADA*\n\n` +
-            `📅 Fecha: ${date}\n` +
-            `🕐 Hora: ${time}\n` +
-            `👤 Cliente: ${client}\n` +
-            `📞 Teléfono: ${phone}`
-    });
-  } catch (error) {
-    console.error('Error notificando cita:', error);
-  }
-  
-  res.json({ success: true });
-});
-
-// =====================================================
-// INICIALIZACIÓN
-// =====================================================
-
-const PORT = process.env.PORT || 3001;
-
-async function init() {
-  console.log('\n🚀 Iniciando sistema RLDental...\n');
-  
+async function initBot() {
   await loadData();
-  
-  app.listen(PORT, () => {
-    console.log(`✅ API REST corriendo en http://localhost:${PORT}`);
-    console.log(`📡 Endpoints disponibles:`);
-    console.log(`   GET  /api/config`);
-    console.log(`   GET  /api/availability/:date`);
-    console.log(`   POST /api/appointments\n`);
-  });
-  
-  console.log('🔄 Conectando a WhatsApp...\n');
-  connectToWhatsApp();
+  await connectToWhatsApp();
 }
 
-init();
+// =====================================================
+// FUNCIONES EXPORTADAS (para server.js)
+// =====================================================
+
+function getDentalData() {
+  return dentalData;
+}
+
+function getSocket() {
+  return sock;
+}
+
+module.exports = {
+  initBot,
+  getDentalData,
+  getSocket,
+  saveData,
+  ADMIN_NUMBER
+};
