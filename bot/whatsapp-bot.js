@@ -124,25 +124,30 @@ async function connectToWhatsApp() {
     const from = msg.key.remoteJid;
     const isFromMe = msg.key.fromMe;
     
-    // FILTRO CRÍTICO: Solo procesar mensajes de tu propio chat
-    const myChat = `${ADMIN_NUMBER}@s.whatsapp.net`;
-    if (from !== myChat) {
-      // Ignorar silenciosamente todos los otros chats
-      return;
-    }
-    
     const text = msg.message.conversation 
       || msg.message.extendedTextMessage?.text 
       || '';
     
     if (!text) return;
     
-    const phoneNumber = from.replace('@s.whatsapp.net', '');
+    // Extraer el número del chat (sin @s.whatsapp.net ni @g.us)
+    const phoneNumber = from.replace('@s.whatsapp.net', '').replace('@g.us', '');
+    
+    // FILTRO: Solo procesar si:
+    // 1. El mensaje lo envié YO (isFromMe = true) - cuando me escribo a mí mismo
+    // 2. O si el número del chat contiene mi ADMIN_NUMBER
+    const isMyChat = isFromMe || phoneNumber.includes(ADMIN_NUMBER);
+    
+    if (!isMyChat) {
+      // Ignorar silenciosamente todos los otros chats
+      return;
+    }
     
     console.log('\n' + '█'.repeat(70));
     console.log('📨 COMANDO RECIBIDO');
     console.log('█'.repeat(70));
-    console.log('Chat:', phoneNumber);
+    console.log('Chat ID:', from);
+    console.log('Número:', phoneNumber);
     console.log('Enviado por mí?', isFromMe ? 'SÍ ✅' : 'NO ❌');
     console.log('Texto:', text);
     console.log('█'.repeat(70) + '\n');
