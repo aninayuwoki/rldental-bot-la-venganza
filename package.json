@@ -1,0 +1,37 @@
+{
+  "name": "rldental-complete-system",
+  "version": "2.0.0",
+  "description": "Sistema completo de gestión dental con WhatsApp Bot y Web en tiempo real",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "clean": "rm -rf data/auth_baileys data/dental-data.json"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "dental",
+    "appointments",
+    "rldental",
+    "real-time",
+    "baileys",
+    "express"
+  ],
+  "author": "RLDental - Reigosa León Dental",
+  "license": "MIT",
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "pino": "^10.2.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
